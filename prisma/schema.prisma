@@ -1,0 +1,97 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  githubId      Int       @unique
+  username      String
+  avatarUrl     String?
+  accessToken   String
+  projects           Project[]
+  pluginConnections  PluginConnection[]
+  activityEvents     ActivityEvent[]
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+}
+
+model Project {
+  id            String    @id @default(cuid())
+  userId        String
+  user          User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  slug          String
+  name          String
+  fullName      String
+  description   String?
+  remoteUrl     String
+  defaultBranch String    @default("main")
+  lastSynced    DateTime?
+  commits       Commit[]
+  createdAt     DateTime  @default(now())
+
+  @@unique([userId, slug])
+  @@index([userId])
+}
+
+model Commit {
+  id            String    @id @default(cuid())
+  projectId     String
+  project       Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  hash          String
+  shortHash     String
+  authorName    String
+  authorEmail   String
+  date          DateTime
+  day           String
+  message       String
+  body          String?
+  filesChanged  Int       @default(0)
+  insertions    Int       @default(0)
+  deletions     Int       @default(0)
+  detailsFetched Boolean  @default(false)
+  files         Json?
+
+  @@unique([projectId, hash])
+  @@index([projectId, day])
+  @@index([day])
+}
+
+model PluginConnection {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pluginId    String
+  enabled     Boolean   @default(true)
+  credentials Json?
+  settings    Json?
+  lastSynced  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@unique([userId, pluginId])
+  @@index([userId])
+}
+
+model ActivityEvent {
+  id          String    @id @default(cuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pluginId    String
+  day         String
+  timestamp   DateTime
+  type        String
+  title       String
+  subtitle    String?
+  metadata    Json?
+  value       Float?
+  createdAt   DateTime  @default(now())
+
+  @@index([userId, pluginId, day])
+  @@index([userId, day])
+  @@index([day])
+}
