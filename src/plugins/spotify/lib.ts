@@ -1,4 +1,5 @@
 import { prisma } from '@/lib/prisma';
+import { getLocalDay } from '@/lib/utils';
 
 const SPOTIFY_TOKEN_URL = 'https://accounts.spotify.com/api/token';
 const SPOTIFY_API_BASE = 'https://api.spotify.com/v1';
@@ -209,7 +210,8 @@ async function resolveContextNames(
 export async function syncSpotifyForUser(
   userId: string,
   credentials: Record<string, any>,
-  lastSynced: Date | null
+  lastSynced: Date | null,
+  timezone: string = 'UTC'
 ): Promise<{ newEvents: number; credentials: SpotifyTokens }> {
   const { accessToken, credentials: updatedCreds } =
     await getValidAccessToken(credentials);
@@ -225,7 +227,7 @@ export async function syncSpotifyForUser(
 
   for (const play of tracks) {
     const timestamp = new Date(play.playedAt);
-    const day = timestamp.toISOString().split('T')[0];
+    const day = getLocalDay(timestamp, timezone);
     const artists = play.track.artists.map((a) => a.name).join(', ');
     const albumImage = play.track.album.images.find((i) => i.width <= 300)?.url
       || play.track.album.images[0]?.url

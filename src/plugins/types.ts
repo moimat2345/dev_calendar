@@ -17,6 +17,7 @@ export interface PluginConnectionData {
   credentials: Record<string, any> | null;
   settings: Record<string, any> | null;
   lastSynced: Date | null;
+  timezone: string;
 }
 
 export interface SyncResult {

@@ -18,7 +18,8 @@ export const spotifyPlugin: PluginDefinition = {
     const result = await syncSpotifyForUser(
       userId,
       connection.credentials,
-      connection.lastSynced
+      connection.lastSynced,
+      connection.timezone
     );
 
     return {

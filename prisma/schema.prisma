@@ -13,6 +13,7 @@ model User {
   username      String
   avatarUrl     String?
   accessToken   String
+  timezone      String    @default("UTC")
   projects           Project[]
   pluginConnections  PluginConnection[]
   activityEvents     ActivityEvent[]

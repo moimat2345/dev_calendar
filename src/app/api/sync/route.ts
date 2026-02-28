@@ -15,6 +15,13 @@ export async function POST() {
   const plugins = getAllPlugins();
   const results: Record<string, { newEvents: number; message?: string; error?: string }> = {};
 
+  // Fetch user's timezone
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { timezone: true },
+  });
+  const timezone = user?.timezone || 'UTC';
+
   // Fetch user's plugin connections
   const connections = await prisma.pluginConnection.findMany({
     where: { userId, enabled: true },
@@ -31,6 +38,7 @@ export async function POST() {
           credentials: (connection?.credentials as Record<string, any>) ?? null,
           settings: (connection?.settings as Record<string, any>) ?? null,
           lastSynced: connection?.lastSynced ?? null,
+          timezone,
         });
         results[plugin.id] = result;
 

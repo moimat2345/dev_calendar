@@ -9,6 +9,12 @@ export function formatDate(date: Date): string {
   return date.toISOString().split("T")[0];
 }
 
+/** Returns YYYY-MM-DD in the user's local timezone */
+export function getLocalDay(date: Date | string, timezone: string): string {
+  const d = typeof date === 'string' ? new Date(date) : date;
+  return d.toLocaleDateString('en-CA', { timeZone: timezone });
+}
+
 export function getDaysInMonth(year: number, month: number): number {
   return new Date(year, month, 0).getDate();
 }

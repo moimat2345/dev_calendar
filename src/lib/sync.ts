@@ -1,6 +1,6 @@
 import { prisma } from "./prisma";
 import { fetchUserRepos, fetchCommits } from "./github";
-import { slugify } from "./utils";
+import { slugify, getLocalDay } from "./utils";
 
 export async function syncUserData(userId: string) {
   // Get user with access token
@@ -13,6 +13,7 @@ export async function syncUserData(userId: string) {
   }
 
   const token = user.accessToken;
+  const timezone = user.timezone || 'UTC';
   let newProjectsCount = 0;
   let newCommitsCount = 0;
 
@@ -67,7 +68,7 @@ export async function syncUserData(userId: string) {
 
     // 4. Insert new commits (skip duplicates)
     for (const commit of commits) {
-      const day = commit.date.split("T")[0];
+      const day = getLocalDay(commit.date, timezone);
 
       try {
         await prisma.commit.create({

@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { SyncButton } from "@/components/SyncButton";
 import { SpotifyConnect } from "@/components/SpotifyConnect";
 import { UserNav } from "@/components/UserNav";
+import { TimezoneDetector } from "@/components/TimezoneDetector";
 import Link from "next/link";
 
 export default async function DashboardLayout({
@@ -45,6 +46,8 @@ export default async function DashboardLayout({
       <main className="max-w-6xl mx-auto px-4 py-8">
         {children}
       </main>
+
+      <TimezoneDetector />
     </div>
   );
 }

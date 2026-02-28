@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
   // Fetch all users with an enabled Spotify connection
   const connections = await prisma.pluginConnection.findMany({
     where: { pluginId: 'spotify', enabled: true },
-    include: { user: { select: { id: true } } },
+    include: { user: { select: { id: true, timezone: true } } },
   });
 
   const results: Record<string, { newEvents: number; error?: string }> = {};
@@ -28,7 +28,8 @@ export async function GET(request: NextRequest) {
       const result = await syncSpotifyForUser(
         userId,
         conn.credentials as Record<string, any>,
-        conn.lastSynced
+        conn.lastSynced,
+        conn.user.timezone || 'UTC'
       );
 
       // Update connection with refreshed credentials + lastSynced
