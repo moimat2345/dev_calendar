@@ -15,14 +15,22 @@ export function SpotifyConnect() {
       .then(data => {
         setStatus(data.connected ? 'connected' : 'disconnected');
 
-        // Auto-sync if connected and last sync was > 2h ago
-        if (data.connected && data.lastSynced) {
-          const elapsed = Date.now() - new Date(data.lastSynced).getTime();
-          if (elapsed > STALE_THRESHOLD_MS) {
-            setSyncing(true);
-            fetch('/api/sync', { method: 'POST' })
-              .finally(() => setSyncing(false));
-          }
+        if (!data.connected) return;
+
+        // Auto-sync if never synced OR last sync was > 2h ago
+        const shouldSync = !data.lastSynced
+          || (Date.now() - new Date(data.lastSynced).getTime()) > STALE_THRESHOLD_MS;
+
+        if (shouldSync) {
+          setSyncing(true);
+          fetch('/api/sync', { method: 'POST' })
+            .then(res => res.json())
+            .then(() => {
+              // Refresh the page to show new data
+              window.location.reload();
+            })
+            .catch(err => console.error('Auto-sync failed:', err))
+            .finally(() => setSyncing(false));
         }
       })
       .catch(() => setStatus('disconnected'));
