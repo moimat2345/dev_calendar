@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { prisma } from "@/lib/prisma";
+import { getLocalNow } from "@/lib/utils";
 
 export async function GET(
   request: NextRequest,
@@ -12,10 +13,19 @@ export async function GET(
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  const userId = session.user.id as string;
   const { slug } = await params;
   const searchParams = request.nextUrl.searchParams;
-  const year = parseInt(searchParams.get("year") || new Date().getFullYear().toString());
-  const month = parseInt(searchParams.get("month") || (new Date().getMonth() + 1).toString());
+
+  // Use user timezone for fallback date
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { timezone: true },
+  });
+  const now = getLocalNow(user?.timezone || 'UTC');
+
+  const year = parseInt(searchParams.get("year") || now.year.toString());
+  const month = parseInt(searchParams.get("month") || now.month.toString());
 
   const project = await prisma.project.findUnique({
     where: {

@@ -22,7 +22,7 @@ export function CalendarDay({ date, day, activity }: CalendarDayProps) {
   const router = useRouter();
   const weight = activity?.totalWeight ?? activity?.totalCommits ?? 0;
   const level = getActivityLevel(weight);
-  const isToday = date === new Date().toISOString().split('T')[0];
+  const isToday = date === new Date().toLocaleDateString('en-CA');
   const hasActivity = weight > 0;
 
   return (

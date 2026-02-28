@@ -5,8 +5,15 @@ export function slugify(name: string): string {
     .replace(/^-|-$/g, "");
 }
 
-export function formatDate(date: Date): string {
-  return date.toISOString().split("T")[0];
+export function formatDate(date: Date, timezone: string = 'UTC'): string {
+  return date.toLocaleDateString('en-CA', { timeZone: timezone });
+}
+
+/** Returns { year, month, day, dateStr } in the user's local timezone */
+export function getLocalNow(timezone: string): { year: number; month: number; day: number; dateStr: string } {
+  const dateStr = new Date().toLocaleDateString('en-CA', { timeZone: timezone });
+  const [y, m, d] = dateStr.split('-').map(Number);
+  return { year: y, month: m, day: d, dateStr };
 }
 
 /** Returns YYYY-MM-DD in the user's local timezone */

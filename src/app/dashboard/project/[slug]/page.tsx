@@ -3,22 +3,27 @@ import { prisma } from "@/lib/prisma";
 import { ProjectCalendar } from "@/components/ProjectCalendar";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import { getLocalNow } from "@/lib/utils";
 
 export default async function ProjectPage({ params }: { params: Promise<{ slug: string }> }) {
   const { slug } = await params;
   const session = await auth();
   const userId = session?.user?.id as string;
 
-  const project = await prisma.project.findUnique({
-    where: { userId_slug: { userId, slug } },
-    include: { _count: { select: { commits: true } } },
-  });
+  const [project, user] = await Promise.all([
+    prisma.project.findUnique({
+      where: { userId_slug: { userId, slug } },
+      include: { _count: { select: { commits: true } } },
+    }),
+    prisma.user.findUnique({
+      where: { id: userId },
+      select: { timezone: true },
+    }),
+  ]);
 
   if (!project) notFound();
 
-  const now = new Date();
-  const year = now.getFullYear();
-  const month = now.getMonth() + 1;
+  const { year, month } = getLocalNow(user?.timezone || 'UTC');
 
   const startDate = `${year}-${String(month).padStart(2, '0')}-01`;
   const endMonth = month === 12 ? 1 : month + 1;

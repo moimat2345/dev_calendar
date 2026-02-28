@@ -76,7 +76,7 @@ export function ProjectCalendar({ slug, initialYear, initialMonth, initialDays }
     const dateStr = `${year}-${String(month).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
     const count = dayMap.get(dateStr) || 0;
     const level = getActivityLevel(count);
-    const isToday = dateStr === new Date().toISOString().split('T')[0];
+    const isToday = dateStr === new Date().toLocaleDateString('en-CA');
 
     cells.push(
       <button

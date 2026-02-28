@@ -1,7 +1,9 @@
 import { auth } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import { getDayCommits, getDayPluginEvents } from "@/lib/activity";
 import { CommitCard } from "@/components/CommitCard";
 import { getPlugin } from "@/plugins/registry";
+import { getLocalNow } from "@/lib/utils";
 import Link from "next/link";
 
 export default async function DayPage({ params }: { params: Promise<{ date: string }> }) {
@@ -45,15 +47,22 @@ export default async function DayPage({ params }: { params: Promise<{ date: stri
     eventsByPlugin.get(event.pluginId)!.push(event);
   }
 
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { timezone: true },
+  });
+  const tz = user?.timezone || 'UTC';
+  const { dateStr: todayStr } = getLocalNow(tz);
+
   const current = new Date(date + 'T12:00:00');
   const prev = new Date(current);
   prev.setDate(prev.getDate() - 1);
   const next = new Date(current);
   next.setDate(next.getDate() + 1);
-  const fmt = (d: Date) => d.toISOString().split('T')[0];
+  const fmt = (d: Date) => d.toLocaleDateString('en-CA', { timeZone: tz });
   const prevDate = fmt(prev);
   const nextDate = fmt(next);
-  const isToday = date === fmt(new Date());
+  const isToday = date === todayStr;
 
   const displayDate = current.toLocaleDateString('en-US', {
     weekday: 'long',
