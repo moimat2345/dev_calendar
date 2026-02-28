@@ -10,8 +10,15 @@ interface SpotifyTokens {
   expiresAt: number; // Unix timestamp ms
 }
 
+interface SpotifyContext {
+  type: string; // 'playlist' | 'album' | 'artist'
+  uri: string;
+  name: string; // resolved via separate API call
+}
+
 interface SpotifyTrackPlay {
   playedAt: string;
+  context: SpotifyContext | null;
   track: {
     id: string;
     name: string;
@@ -130,6 +137,9 @@ export async function fetchRecentlyPlayed(
   const data = await res.json();
   return (data.items || []).map((item: any) => ({
     playedAt: item.played_at,
+    context: item.context
+      ? { type: item.context.type, uri: item.context.uri, name: '' }
+      : null,
     track: {
       id: item.track.id,
       name: item.track.name,
@@ -144,6 +154,58 @@ export async function fetchRecentlyPlayed(
   }));
 }
 
+function parseSpotifyUri(uri: string): { type: string; id: string } | null {
+  // spotify:playlist:xxx or spotify:album:xxx or spotify:artist:xxx
+  const parts = uri.split(':');
+  if (parts.length >= 3) {
+    return { type: parts[1], id: parts[2] };
+  }
+  return null;
+}
+
+async function resolveContextNames(
+  accessToken: string,
+  tracks: SpotifyTrackPlay[]
+): Promise<Map<string, string>> {
+  const nameMap = new Map<string, string>();
+  const uniqueUris = new Set<string>();
+
+  for (const t of tracks) {
+    if (t.context?.uri) uniqueUris.add(t.context.uri);
+  }
+
+  const fetches = Array.from(uniqueUris).map(async (uri) => {
+    const parsed = parseSpotifyUri(uri);
+    if (!parsed) return;
+
+    let endpoint = '';
+    if (parsed.type === 'playlist' || parsed.type === 'playlist_v2') {
+      endpoint = `${SPOTIFY_API_BASE}/playlists/${parsed.id}?fields=name`;
+    } else if (parsed.type === 'album') {
+      endpoint = `${SPOTIFY_API_BASE}/albums/${parsed.id}?fields=name`;
+    } else if (parsed.type === 'artist') {
+      endpoint = `${SPOTIFY_API_BASE}/artists/${parsed.id}?fields=name`;
+    } else {
+      return;
+    }
+
+    try {
+      const res = await fetch(endpoint, {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      if (res.ok) {
+        const data = await res.json();
+        nameMap.set(uri, data.name || uri);
+      }
+    } catch {
+      // Ignore failed lookups — name stays empty
+    }
+  });
+
+  await Promise.all(fetches);
+  return nameMap;
+}
+
 export async function syncSpotifyForUser(
   userId: string,
   credentials: Record<string, any>,
@@ -156,6 +218,9 @@ export async function syncSpotifyForUser(
   const after = lastSynced ? lastSynced.getTime() : undefined;
   const tracks = await fetchRecentlyPlayed(accessToken, after);
 
+  // Resolve context names (playlist/album/artist) in parallel
+  const contextNames = await resolveContextNames(accessToken, tracks);
+
   let newEvents = 0;
 
   for (const play of tracks) {
@@ -165,6 +230,12 @@ export async function syncSpotifyForUser(
     const albumImage = play.track.album.images.find((i) => i.width <= 300)?.url
       || play.track.album.images[0]?.url
       || null;
+
+    // Resolve context name
+    const contextName = play.context?.uri
+      ? contextNames.get(play.context.uri) || null
+      : null;
+    const contextType = play.context?.type?.replace('_v2', '') || null;
 
     // Upsert to avoid duplicates (same user + same track + same played_at)
     const existing = await prisma.activityEvent.findFirst({
@@ -192,6 +263,9 @@ export async function syncSpotifyForUser(
             albumName: play.track.album.name,
             albumImageUrl: albumImage,
             durationMs: play.track.durationMs,
+            contextType,
+            contextName,
+            contextUri: play.context?.uri || null,
           },
         },
       });
