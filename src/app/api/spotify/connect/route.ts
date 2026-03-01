@@ -18,7 +18,7 @@ export async function GET() {
   const params = new URLSearchParams({
     response_type: 'code',
     client_id: clientId,
-    scope: 'user-read-recently-played',
+    scope: 'user-read-recently-played user-library-read user-top-read user-read-currently-playing user-follow-read',
     redirect_uri: redirectUri,
     state: session.user.id,
     show_dialog: 'true',

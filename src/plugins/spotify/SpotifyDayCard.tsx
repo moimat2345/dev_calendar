@@ -44,6 +44,113 @@ function getPeakHour(events: ActivityEventData[]): string | null {
   return `${String(peakHour).padStart(2, '0')}:00`;
 }
 
+// --- Aggregations ---
+
+interface GenreBreakdown {
+  genre: string;
+  percent: number;
+}
+
+function getTopGenres(events: ActivityEventData[], limit = 4): GenreBreakdown[] {
+  const genreCount = new Map<string, number>();
+  let total = 0;
+
+  for (const e of events) {
+    const genres = e.metadata?.genres as string[] | undefined;
+    if (genres?.length) {
+      for (const g of genres) {
+        genreCount.set(g, (genreCount.get(g) || 0) + 1);
+        total++;
+      }
+    }
+  }
+
+  if (total === 0) return [];
+
+  return [...genreCount.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, limit)
+    .map(([genre, count]) => ({
+      genre,
+      percent: Math.round((count / total) * 100),
+    }));
+}
+
+interface MoodInfo {
+  label: string;
+  color: string;
+  valence: number;
+  energy: number;
+}
+
+function getMood(events: ActivityEventData[]): MoodInfo | null {
+  let totalValence = 0;
+  let totalEnergy = 0;
+  let count = 0;
+
+  for (const e of events) {
+    const v = e.metadata?.valence as number | undefined;
+    const en = e.metadata?.energy as number | undefined;
+    if (v !== undefined && en !== undefined) {
+      totalValence += v;
+      totalEnergy += en;
+      count++;
+    }
+  }
+
+  if (count === 0) return null;
+
+  const valence = totalValence / count;
+  const energy = totalEnergy / count;
+
+  let label: string;
+  let color: string;
+
+  if (valence > 0.6 && energy > 0.6) {
+    label = 'upbeat';
+    color = '#22c55e'; // green
+  } else if (valence > 0.6 && energy <= 0.6) {
+    label = 'chill';
+    color = '#06b6d4'; // cyan
+  } else if (valence <= 0.4 && energy > 0.6) {
+    label = 'intense';
+    color = '#ef4444'; // red
+  } else if (valence <= 0.4 && energy <= 0.4) {
+    label = 'mélancolique';
+    color = '#8b5cf6'; // purple
+  } else {
+    label = 'neutre';
+    color = '#a3a3a3'; // neutral
+  }
+
+  return { label, color, valence, energy };
+}
+
+interface TopArtist {
+  name: string;
+  plays: number;
+  totalMs: number;
+}
+
+function getTopArtists(events: ActivityEventData[], limit = 3): TopArtist[] {
+  const artistMap = new Map<string, { plays: number; totalMs: number }>();
+
+  for (const e of events) {
+    // subtitle contains "Artist1, Artist2" — take primary artist
+    const primary = e.subtitle?.split(', ')[0];
+    if (!primary) continue;
+    const existing = artistMap.get(primary) || { plays: 0, totalMs: 0 };
+    existing.plays++;
+    existing.totalMs += e.value || 0;
+    artistMap.set(primary, existing);
+  }
+
+  return [...artistMap.entries()]
+    .sort((a, b) => b[1].plays - a[1].plays)
+    .slice(0, limit)
+    .map(([name, data]) => ({ name, ...data }));
+}
+
 // --- Session grouping ---
 
 interface Session {
@@ -65,9 +172,10 @@ function groupIntoSessions(events: ActivityEventData[]): Session[] {
 
   for (const event of sorted) {
     const uri = event.metadata?.contextUri || null;
+    const type = event.metadata?.contextType || null;
 
-    // Start new session if context changes
-    if (!current || current.contextUri !== uri) {
+    // Start new session if context changes (compare both URI and type)
+    if (!current || current.contextUri !== uri || current.contextType !== type) {
       current = {
         contextUri: uri,
         contextType: event.metadata?.contextType || null,
@@ -241,6 +349,9 @@ export function SpotifyDayCard({ events }: { events: ActivityEventData[]; date: 
   const totalMs = events.reduce((sum, e) => sum + (e.value || 0), 0);
   const peakHour = getPeakHour(events);
   const sessions = groupIntoSessions(events);
+  const topGenres = getTopGenres(events);
+  const mood = getMood(events);
+  const topArtists = getTopArtists(events);
 
   return (
     <div className="space-y-3">
@@ -263,12 +374,62 @@ export function SpotifyDayCard({ events }: { events: ActivityEventData[]; date: 
             </span>
           </>
         )}
+        {mood && (
+          <>
+            <span className="text-[10px] font-mono text-neutral-700">|</span>
+            <span
+              className="text-[10px] font-mono font-medium px-1.5 py-0.5 rounded-sm"
+              style={{
+                color: mood.color,
+                backgroundColor: mood.color + '15',
+                border: `1px solid ${mood.color}30`,
+              }}
+            >
+              {mood.label}
+            </span>
+          </>
+        )}
       </div>
+
+      {/* Genres + Top Artists */}
+      {(topGenres.length > 0 || topArtists.length > 0) && (
+        <div className="flex flex-wrap gap-x-6 gap-y-2">
+          {/* Genres */}
+          {topGenres.length > 0 && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[9px] font-mono text-neutral-600 uppercase tracking-wider">genres</span>
+              {topGenres.map(({ genre, percent }) => (
+                <span
+                  key={genre}
+                  className="text-[10px] font-mono text-neutral-400"
+                >
+                  {genre} <span className="text-neutral-600">{percent}%</span>
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Top Artists */}
+          {topArtists.length > 0 && (
+            <div className="flex items-center gap-1.5 flex-wrap">
+              <span className="text-[9px] font-mono text-neutral-600 uppercase tracking-wider">top</span>
+              {topArtists.map(({ name, plays, totalMs: ms }) => (
+                <span
+                  key={name}
+                  className="text-[10px] font-mono text-neutral-400"
+                >
+                  {name} <span className="text-neutral-600">{plays}x · {formatTotalTime(ms)}</span>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Sessions */}
       <div className="space-y-0.5">
         {sessions.map((session, i) => (
-          <SessionRow key={`${session.contextUri}-${i}`} session={session} index={i} />
+          <SessionRow key={`${session.contextUri}-${session.contextType}-${i}`} session={session} index={i} />
         ))}
       </div>
     </div>

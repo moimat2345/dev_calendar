@@ -25,7 +25,7 @@ interface SpotifyTrackPlay {
     name: string;
     durationMs: number;
     uri: string;
-    artists: { name: string }[];
+    artists: { id: string; name: string }[];
     album: {
       name: string;
       images: { url: string; width: number }[];
@@ -146,7 +146,7 @@ export async function fetchRecentlyPlayed(
       name: item.track.name,
       durationMs: item.track.duration_ms,
       uri: item.track.uri,
-      artists: item.track.artists.map((a: any) => ({ name: a.name })),
+      artists: item.track.artists.map((a: any) => ({ id: a.id, name: a.name })),
       album: {
         name: item.track.album.name,
         images: item.track.album.images || [],
@@ -231,10 +231,97 @@ export async function checkSavedTracks(
       batch.forEach((id, idx) => {
         if (results[idx]) saved.add(id);
       });
+    } else {
+      console.error(`Spotify /me/tracks/contains failed: ${res.status} ${res.statusText}`);
     }
   }
 
   return saved;
+}
+
+export interface AudioFeatures {
+  valence: number;
+  energy: number;
+  danceability: number;
+  tempo: number;
+  acousticness: number;
+  instrumentalness: number;
+}
+
+export async function fetchAudioFeatures(
+  accessToken: string,
+  trackIds: string[]
+): Promise<Map<string, AudioFeatures>> {
+  const featureMap = new Map<string, AudioFeatures>();
+  if (trackIds.length === 0) return featureMap;
+
+  // API accepts max 100 IDs per call
+  for (let i = 0; i < trackIds.length; i += 100) {
+    const batch = trackIds.slice(i, i + 100);
+    try {
+      const res = await fetch(
+        `${SPOTIFY_API_BASE}/audio-features?ids=${batch.join(',')}`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        for (const feat of data.audio_features || []) {
+          if (feat) {
+            featureMap.set(feat.id, {
+              valence: feat.valence,
+              energy: feat.energy,
+              danceability: feat.danceability,
+              tempo: feat.tempo,
+              acousticness: feat.acousticness,
+              instrumentalness: feat.instrumentalness,
+            });
+          }
+        }
+      } else {
+        console.error(`Spotify /audio-features failed: ${res.status}`);
+      }
+    } catch {
+      // Ignore network errors
+    }
+  }
+
+  return featureMap;
+}
+
+export async function fetchArtistGenres(
+  accessToken: string,
+  artistIds: string[]
+): Promise<Map<string, string[]>> {
+  const genreMap = new Map<string, string[]>();
+  if (artistIds.length === 0) return genreMap;
+
+  // Deduplicate
+  const uniqueIds = [...new Set(artistIds)];
+
+  // API accepts max 50 IDs per call
+  for (let i = 0; i < uniqueIds.length; i += 50) {
+    const batch = uniqueIds.slice(i, i + 50);
+    try {
+      const res = await fetch(
+        `${SPOTIFY_API_BASE}/artists?ids=${batch.join(',')}`,
+        { headers: { Authorization: `Bearer ${accessToken}` } }
+      );
+      if (res.ok) {
+        const data = await res.json();
+        for (const artist of data.artists || []) {
+          if (artist?.id && artist.genres?.length > 0) {
+            genreMap.set(artist.id, artist.genres);
+          }
+        }
+      } else {
+        console.error(`Spotify /artists failed: ${res.status}`);
+      }
+    } catch {
+      // Ignore network errors
+    }
+  }
+
+  return genreMap;
 }
 
 export async function syncSpotifyForUser(
@@ -260,7 +347,16 @@ export async function syncSpotifyForUser(
   const noContextTrackIds = tracks
     .filter(t => !t.context)
     .map(t => t.track.id);
-  const savedTrackIds = await checkSavedTracks(accessToken, noContextTrackIds);
+
+  // Fetch audio features, artist genres, and saved status in parallel
+  const allTrackIds = tracks.map(t => t.track.id);
+  const allArtistIds = tracks.map(t => t.track.artists[0]?.id).filter(Boolean);
+
+  const [savedTrackIds, audioFeaturesMap, artistGenresMap] = await Promise.all([
+    checkSavedTracks(accessToken, noContextTrackIds),
+    fetchAudioFeatures(accessToken, allTrackIds),
+    fetchArtistGenres(accessToken, allArtistIds),
+  ]);
 
   let newEvents = 0;
 
@@ -318,6 +414,10 @@ export async function syncSpotifyForUser(
             contextName,
             contextImageUrl,
             contextUri: play.context?.uri || null,
+            // Audio features
+            ...(audioFeaturesMap.get(play.track.id) || {}),
+            // Genres from primary artist
+            genres: artistGenresMap.get(play.track.artists[0]?.id) || [],
           },
         },
       });
@@ -406,6 +506,71 @@ export async function recheckAllSpotifyContexts(
               ...(event.metadata as any),
               contextName: info.name,
               contextImageUrl: info.imageUrl,
+            },
+          },
+        });
+        updated++;
+      }
+    }
+  }
+
+  // 3. Backfill audio features + genres for tracks missing them
+  const missingFeaturesEvents = events.filter(
+    e => (e.metadata as any)?.trackId && (e.metadata as any)?.valence === undefined
+  );
+
+  if (missingFeaturesEvents.length > 0) {
+    const trackIds = missingFeaturesEvents
+      .map(e => (e.metadata as any).trackId as string)
+      .filter(Boolean);
+
+    // Extract artist IDs from subtitle (stored as "Artist1, Artist2")
+    // We need to fetch track details to get artist IDs
+    const uniqueTrackIds = [...new Set(trackIds)];
+
+    // Fetch audio features in batch
+    const featuresMap = await fetchAudioFeatures(accessToken, uniqueTrackIds);
+
+    // Fetch artist genres: we need artist IDs which aren't stored in old events
+    // Get them from Spotify track endpoint
+    const artistIdMap = new Map<string, string>(); // trackId -> primary artistId
+    for (let i = 0; i < uniqueTrackIds.length; i += 50) {
+      const batch = uniqueTrackIds.slice(i, i + 50);
+      try {
+        const res = await fetch(
+          `${SPOTIFY_API_BASE}/tracks?ids=${batch.join(',')}`,
+          { headers: { Authorization: `Bearer ${accessToken}` } }
+        );
+        if (res.ok) {
+          const data = await res.json();
+          for (const track of data.tracks || []) {
+            if (track?.id && track.artists?.[0]?.id) {
+              artistIdMap.set(track.id, track.artists[0].id);
+            }
+          }
+        }
+      } catch {
+        // Ignore
+      }
+    }
+
+    const allArtistIds = [...new Set(artistIdMap.values())];
+    const genresMap = await fetchArtistGenres(accessToken, allArtistIds);
+
+    for (const event of missingFeaturesEvents) {
+      const trackId = (event.metadata as any).trackId;
+      const features = featuresMap.get(trackId);
+      const artistId = artistIdMap.get(trackId);
+      const genres = artistId ? genresMap.get(artistId) || [] : [];
+
+      if (features || genres.length > 0) {
+        await prisma.activityEvent.update({
+          where: { id: event.id },
+          data: {
+            metadata: {
+              ...(event.metadata as any),
+              ...(features || {}),
+              genres,
             },
           },
         });
