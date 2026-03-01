@@ -164,11 +164,16 @@ function parseSpotifyUri(uri: string): { type: string; id: string } | null {
   return null;
 }
 
-async function resolveContextNames(
+interface ContextInfo {
+  name: string;
+  imageUrl: string | null;
+}
+
+async function resolveContexts(
   accessToken: string,
   tracks: SpotifyTrackPlay[]
-): Promise<Map<string, string>> {
-  const nameMap = new Map<string, string>();
+): Promise<Map<string, ContextInfo>> {
+  const infoMap = new Map<string, ContextInfo>();
   const uniqueUris = new Set<string>();
 
   for (const t of tracks) {
@@ -176,16 +181,22 @@ async function resolveContextNames(
   }
 
   const fetches = Array.from(uniqueUris).map(async (uri) => {
+    // Liked Songs: spotify:user:xxx:collection
+    if (uri.includes(':collection')) {
+      infoMap.set(uri, { name: 'Titres likés', imageUrl: null });
+      return;
+    }
+
     const parsed = parseSpotifyUri(uri);
     if (!parsed) return;
 
     let endpoint = '';
     if (parsed.type === 'playlist' || parsed.type === 'playlist_v2') {
-      endpoint = `${SPOTIFY_API_BASE}/playlists/${parsed.id}?fields=name`;
+      endpoint = `${SPOTIFY_API_BASE}/playlists/${parsed.id}?fields=name,images`;
     } else if (parsed.type === 'album') {
-      endpoint = `${SPOTIFY_API_BASE}/albums/${parsed.id}?fields=name`;
+      endpoint = `${SPOTIFY_API_BASE}/albums/${parsed.id}`;
     } else if (parsed.type === 'artist') {
-      endpoint = `${SPOTIFY_API_BASE}/artists/${parsed.id}?fields=name`;
+      endpoint = `${SPOTIFY_API_BASE}/artists/${parsed.id}`;
     } else {
       return;
     }
@@ -196,15 +207,19 @@ async function resolveContextNames(
       });
       if (res.ok) {
         const data = await res.json();
-        nameMap.set(uri, data.name || uri);
+        const images = data.images || [];
+        const imageUrl = images.find((i: any) => i.width && i.width <= 300)?.url
+          || images[0]?.url
+          || null;
+        infoMap.set(uri, { name: data.name || uri, imageUrl });
       }
     } catch {
-      // Ignore failed lookups — name stays empty
+      // Ignore failed lookups
     }
   });
 
   await Promise.all(fetches);
-  return nameMap;
+  return infoMap;
 }
 
 export async function syncSpotifyForUser(
@@ -220,8 +235,8 @@ export async function syncSpotifyForUser(
   const after = lastSynced ? lastSynced.getTime() : undefined;
   const tracks = await fetchRecentlyPlayed(accessToken, after);
 
-  // Resolve context names (playlist/album/artist) in parallel
-  const contextNames = await resolveContextNames(accessToken, tracks);
+  // Resolve context info (name + image) in parallel
+  const contextInfoMap = await resolveContexts(accessToken, tracks);
 
   let newEvents = 0;
 
@@ -233,11 +248,15 @@ export async function syncSpotifyForUser(
       || play.track.album.images[0]?.url
       || null;
 
-    // Resolve context name
-    const contextName = play.context?.uri
-      ? contextNames.get(play.context.uri) || null
+    // Resolve context info
+    const contextInfo = play.context?.uri
+      ? contextInfoMap.get(play.context.uri) || null
       : null;
-    const contextType = play.context?.type?.replace('_v2', '') || null;
+    const contextName = contextInfo?.name || null;
+    const contextImageUrl = contextInfo?.imageUrl || null;
+    // Detect liked songs: context URI contains ":collection"
+    const rawType = play.context?.type?.replace('_v2', '') || null;
+    const contextType = play.context?.uri?.includes(':collection') ? 'collection' : rawType;
 
     // Upsert to avoid duplicates (same user + same track + same played_at)
     const existing = await prisma.activityEvent.findFirst({
@@ -267,6 +286,7 @@ export async function syncSpotifyForUser(
             durationMs: play.track.durationMs,
             contextType,
             contextName,
+            contextImageUrl,
             contextUri: play.context?.uri || null,
           },
         },

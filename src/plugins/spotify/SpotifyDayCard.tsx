@@ -87,8 +87,15 @@ function groupIntoSessions(events: ActivityEventData[]): Session[] {
 
 // --- Icons ---
 
-function ContextIcon({ type }: { type: string | null }) {
-  const cls = "w-3.5 h-3.5 text-neutral-500";
+function ContextIcon({ type, size = 'sm' }: { type: string | null; size?: 'sm' | 'md' }) {
+  const cls = size === 'md' ? "w-7 h-7 p-1.5 rounded-sm bg-white/[0.04] text-neutral-500" : "w-3.5 h-3.5 text-neutral-500";
+  if (type === 'collection') {
+    return (
+      <svg className={cls} viewBox="0 0 16 16" fill="currentColor">
+        <path d="M8 2.748l-.717-.737C5.6.281 2.514.878 1.4 3.053c-.523 1.023-.641 2.5.314 4.385.92 1.815 2.834 3.989 6.286 6.357 3.452-2.368 5.365-4.542 6.286-6.357.955-1.886.838-3.362.314-4.385C13.486.878 10.4.28 8.717 2.01L8 2.748z" />
+      </svg>
+    );
+  }
   if (type === 'playlist') {
     return (
       <svg className={cls} viewBox="0 0 16 16" fill="currentColor">
@@ -136,6 +143,7 @@ function ChevronIcon({ open }: { open: boolean }) {
 function SessionRow({ session, index }: { session: Session; index: number }) {
   const [open, setOpen] = useState(false);
   const label = session.contextName
+    || (session.contextType === 'collection' ? 'Titres likés' : null)
     || (session.contextType === 'album' ? 'Album' : null)
     || 'Titres individuels';
 
@@ -146,8 +154,10 @@ function SessionRow({ session, index }: { session: Session; index: number }) {
     ? `${formatTime(firstTime)} – ${formatTime(lastTime)}`
     : '';
 
-  // Session cover: use the first available album image from tracks
-  const sessionCover = session.events.find(e => e.metadata?.albumImageUrl)?.metadata?.albumImageUrl || null;
+  // Session cover: prefer context image (playlist/album cover), fallback to first track's album art
+  const sessionCover = session.events.find(e => e.metadata?.contextImageUrl)?.metadata?.contextImageUrl
+    || session.events.find(e => e.metadata?.albumImageUrl)?.metadata?.albumImageUrl
+    || null;
 
   return (
     <div
@@ -167,7 +177,7 @@ function SessionRow({ session, index }: { session: Session; index: number }) {
             className="w-7 h-7 rounded-sm flex-shrink-0"
           />
         ) : (
-          <ContextIcon type={session.contextType} />
+          <ContextIcon type={session.contextType} size="md" />
         )}
         <div className="flex-1 min-w-0">
           <span className="text-xs font-mono text-neutral-300 truncate block">
