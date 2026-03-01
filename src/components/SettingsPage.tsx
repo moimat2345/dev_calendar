@@ -64,6 +64,8 @@ export function SettingsPage() {
   const [calendarDensity, setCalendarDensity] = useState<'normal' | 'compact'>('normal');
   const [rechecking, setRechecking] = useState(false);
   const [recheckResult, setRecheckResult] = useState<number | null>(null);
+  const [confirmDisconnect, setConfirmDisconnect] = useState<string | null>(null);
+  const [disconnecting, setDisconnecting] = useState<string | null>(null);
 
   useEffect(() => {
     fetch('/api/user/settings')
@@ -139,6 +141,20 @@ export function SettingsPage() {
       setRecheckResult(-1);
     } finally {
       setRechecking(false);
+    }
+  }
+
+  async function handleDisconnect(pluginId: string) {
+    setDisconnecting(pluginId);
+    try {
+      await fetch(`/api/${pluginId}/disconnect`, { method: 'DELETE' });
+      setConfirmDisconnect(null);
+      // Refresh settings data
+      const res = await fetch('/api/user/settings');
+      const d = await res.json();
+      setData(d);
+    } catch {} finally {
+      setDisconnecting(null);
     }
   }
 
@@ -324,6 +340,37 @@ export function SettingsPage() {
                       </span>
                     )}
                   </div>
+
+                  {/* Disconnect button (non-github plugins) */}
+                  {plugin.id !== 'github' && (
+                    confirmDisconnect === plugin.id ? (
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] font-mono text-amber-400">
+                          déconnecter {plugin.name} ?
+                        </span>
+                        <button
+                          onClick={() => handleDisconnect(plugin.id)}
+                          disabled={disconnecting === plugin.id}
+                          className="text-[10px] font-mono px-2 py-0.5 rounded border border-red-500/40 bg-red-950/30 text-red-400 hover:bg-red-950/50 transition-colors disabled:opacity-50"
+                        >
+                          {disconnecting === plugin.id ? 'déconnexion…' : 'confirmer'}
+                        </button>
+                        <button
+                          onClick={() => setConfirmDisconnect(null)}
+                          className="text-[10px] font-mono px-2 py-0.5 rounded border border-white/10 text-neutral-500 hover:bg-white/5 transition-colors"
+                        >
+                          annuler
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        onClick={() => setConfirmDisconnect(plugin.id)}
+                        className="text-[10px] font-mono text-neutral-600 hover:text-red-400 transition-colors"
+                      >
+                        déconnecter →
+                      </button>
+                    )
+                  )}
 
                   {/* Wipe button for this plugin */}
                   {confirmWipe === plugin.id ? (
