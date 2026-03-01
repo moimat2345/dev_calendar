@@ -58,9 +58,9 @@ function groupIntoSessions(events: ActivityEventData[]): Session[] {
   const sessions: Session[] = [];
   let current: Session | null = null;
 
-  // Events should be sorted by timestamp (oldest first for display)
+  // Events sorted by timestamp (newest first)
   const sorted = [...events].sort(
-    (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
+    (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
   );
 
   for (const event of sorted) {
@@ -138,9 +138,16 @@ function SessionRow({ session, index }: { session: Session; index: number }) {
   const label = session.contextName
     || (session.contextType === 'album' ? 'Album' : null)
     || 'Titres individuels';
-  const timeRange = session.events.length > 0
-    ? `${formatTime(session.events[0].timestamp)} – ${formatTime(session.events[session.events.length - 1].timestamp)}`
+
+  // Time range: events are newest-first, so last element is earliest
+  const firstTime = session.events[session.events.length - 1]?.timestamp;
+  const lastTime = session.events[0]?.timestamp;
+  const timeRange = firstTime && lastTime
+    ? `${formatTime(firstTime)} – ${formatTime(lastTime)}`
     : '';
+
+  // Session cover: use the first available album image from tracks
+  const sessionCover = session.events.find(e => e.metadata?.albumImageUrl)?.metadata?.albumImageUrl || null;
 
   return (
     <div
@@ -153,7 +160,15 @@ function SessionRow({ session, index }: { session: Session; index: number }) {
         className="w-full flex items-center gap-2.5 py-2 px-2.5 rounded-md hover:bg-white/[0.03] transition-colors text-left"
       >
         <ChevronIcon open={open} />
-        <ContextIcon type={session.contextType} />
+        {sessionCover ? (
+          <img
+            src={sessionCover}
+            alt=""
+            className="w-7 h-7 rounded-sm flex-shrink-0"
+          />
+        ) : (
+          <ContextIcon type={session.contextType} />
+        )}
         <div className="flex-1 min-w-0">
           <span className="text-xs font-mono text-neutral-300 truncate block">
             {label}
