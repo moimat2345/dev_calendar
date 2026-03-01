@@ -169,24 +169,14 @@ interface ContextInfo {
   imageUrl: string | null;
 }
 
-async function resolveContexts(
+export async function resolveContextsByUris(
   accessToken: string,
-  tracks: SpotifyTrackPlay[]
+  uris: string[]
 ): Promise<Map<string, ContextInfo>> {
   const infoMap = new Map<string, ContextInfo>();
-  const uniqueUris = new Set<string>();
-
-  for (const t of tracks) {
-    if (t.context?.uri) uniqueUris.add(t.context.uri);
-  }
+  const uniqueUris = new Set(uris);
 
   const fetches = Array.from(uniqueUris).map(async (uri) => {
-    // Liked Songs: spotify:user:xxx:collection
-    if (uri.includes(':collection')) {
-      infoMap.set(uri, { name: 'Titres likés', imageUrl: null });
-      return;
-    }
-
     const parsed = parseSpotifyUri(uri);
     if (!parsed) return;
 
@@ -222,6 +212,31 @@ async function resolveContexts(
   return infoMap;
 }
 
+export async function checkSavedTracks(
+  accessToken: string,
+  trackIds: string[]
+): Promise<Set<string>> {
+  const saved = new Set<string>();
+  if (trackIds.length === 0) return saved;
+
+  // API accepts max 50 IDs per call
+  for (let i = 0; i < trackIds.length; i += 50) {
+    const batch = trackIds.slice(i, i + 50);
+    const res = await fetch(
+      `${SPOTIFY_API_BASE}/me/tracks/contains?ids=${batch.join(',')}`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    if (res.ok) {
+      const results: boolean[] = await res.json();
+      batch.forEach((id, idx) => {
+        if (results[idx]) saved.add(id);
+      });
+    }
+  }
+
+  return saved;
+}
+
 export async function syncSpotifyForUser(
   userId: string,
   credentials: Record<string, any>,
@@ -236,7 +251,16 @@ export async function syncSpotifyForUser(
   const tracks = await fetchRecentlyPlayed(accessToken, after);
 
   // Resolve context info (name + image) in parallel
-  const contextInfoMap = await resolveContexts(accessToken, tracks);
+  const contextUris = tracks
+    .map(t => t.context?.uri)
+    .filter((uri): uri is string => !!uri);
+  const contextInfoMap = await resolveContextsByUris(accessToken, contextUris);
+
+  // Check which context-less tracks are in Liked Songs
+  const noContextTrackIds = tracks
+    .filter(t => !t.context)
+    .map(t => t.track.id);
+  const savedTrackIds = await checkSavedTracks(accessToken, noContextTrackIds);
 
   let newEvents = 0;
 
@@ -249,14 +273,20 @@ export async function syncSpotifyForUser(
       || null;
 
     // Resolve context info
-    const contextInfo = play.context?.uri
-      ? contextInfoMap.get(play.context.uri) || null
-      : null;
-    const contextName = contextInfo?.name || null;
-    const contextImageUrl = contextInfo?.imageUrl || null;
-    // Detect liked songs: context URI contains ":collection"
-    const rawType = play.context?.type?.replace('_v2', '') || null;
-    const contextType = play.context?.uri?.includes(':collection') ? 'collection' : rawType;
+    let contextType: string | null = null;
+    let contextName: string | null = null;
+    let contextImageUrl: string | null = null;
+
+    if (play.context?.uri) {
+      const contextInfo = contextInfoMap.get(play.context.uri) || null;
+      contextName = contextInfo?.name || null;
+      contextImageUrl = contextInfo?.imageUrl || null;
+      contextType = play.context.type?.replace('_v2', '') || null;
+    } else if (savedTrackIds.has(play.track.id)) {
+      // No context but track is in Liked Songs
+      contextType = 'collection';
+      contextName = 'Titres likés';
+    }
 
     // Upsert to avoid duplicates (same user + same track + same played_at)
     const existing = await prisma.activityEvent.findFirst({
@@ -296,4 +326,93 @@ export async function syncSpotifyForUser(
   }
 
   return { newEvents, credentials: updatedCreds };
+}
+
+export async function recheckAllSpotifyContexts(
+  userId: string
+): Promise<{ updated: number }> {
+  // Get Spotify connection + valid access token
+  const connection = await prisma.pluginConnection.findUnique({
+    where: { userId_pluginId: { userId, pluginId: 'spotify' } },
+  });
+  if (!connection?.enabled || !connection.credentials) {
+    throw new Error('Spotify not connected');
+  }
+
+  const { accessToken, credentials: updatedCreds } =
+    await getValidAccessToken(connection.credentials as Record<string, any>);
+
+  // Save refreshed credentials
+  await prisma.pluginConnection.update({
+    where: { id: connection.id },
+    data: { credentials: updatedCreds },
+  });
+
+  // Fetch all Spotify events for this user
+  const events = await prisma.activityEvent.findMany({
+    where: { userId, pluginId: 'spotify' },
+  });
+
+  let updated = 0;
+
+  // 1. Fix liked songs: check tracks with no contextType
+  const noContextEvents = events.filter(
+    e => !(e.metadata as any)?.contextType
+  );
+  const noContextTrackIds = noContextEvents
+    .map(e => (e.metadata as any)?.trackId as string)
+    .filter(Boolean);
+
+  const savedIds = await checkSavedTracks(accessToken, noContextTrackIds);
+
+  for (const event of noContextEvents) {
+    const trackId = (event.metadata as any)?.trackId;
+    if (trackId && savedIds.has(trackId)) {
+      await prisma.activityEvent.update({
+        where: { id: event.id },
+        data: {
+          metadata: {
+            ...(event.metadata as any),
+            contextType: 'collection',
+            contextName: 'Titres likés',
+          },
+        },
+      });
+      updated++;
+    }
+  }
+
+  // 2. Fix missing context names/images for tracks that have a URI
+  const missingContextEvents = events.filter(e => {
+    const m = e.metadata as any;
+    return m?.contextUri && !m?.contextName;
+  });
+
+  const urisToResolve = [
+    ...new Set(missingContextEvents.map(e => (e.metadata as any).contextUri as string)),
+  ];
+
+  if (urisToResolve.length > 0) {
+    const contextInfoMap = await resolveContextsByUris(accessToken, urisToResolve);
+
+    for (const event of missingContextEvents) {
+      const uri = (event.metadata as any).contextUri;
+      const info = contextInfoMap.get(uri);
+      if (info) {
+        await prisma.activityEvent.update({
+          where: { id: event.id },
+          data: {
+            metadata: {
+              ...(event.metadata as any),
+              contextName: info.name,
+              contextImageUrl: info.imageUrl,
+            },
+          },
+        });
+        updated++;
+      }
+    }
+  }
+
+  return { updated };
 }

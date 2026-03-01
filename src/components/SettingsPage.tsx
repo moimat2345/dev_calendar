@@ -62,6 +62,8 @@ export function SettingsPage() {
   const [wipeSuccess, setWipeSuccess] = useState<string | null>(null);
   const [syncing, setSyncing] = useState(false);
   const [calendarDensity, setCalendarDensity] = useState<'normal' | 'compact'>('normal');
+  const [rechecking, setRechecking] = useState(false);
+  const [recheckResult, setRecheckResult] = useState<number | null>(null);
 
   useEffect(() => {
     fetch('/api/user/settings')
@@ -124,6 +126,20 @@ export function SettingsPage() {
   function handleDensityChange(d: 'normal' | 'compact') {
     setCalendarDensity(d);
     localStorage.setItem('calendar-density', d);
+  }
+
+  async function handleRecheck() {
+    setRechecking(true);
+    setRecheckResult(null);
+    try {
+      const res = await fetch('/api/spotify/recheck', { method: 'POST' });
+      const data = await res.json();
+      setRecheckResult(data.updated ?? 0);
+    } catch {
+      setRecheckResult(-1);
+    } finally {
+      setRechecking(false);
+    }
   }
 
   if (loading) {
@@ -342,6 +358,33 @@ export function SettingsPage() {
                     <p className="text-[10px] font-mono text-cyan-400">
                       ✓ données effacées et re-synchronisées
                     </p>
+                  )}
+
+                  {/* Spotify-only: recheck contexts */}
+                  {plugin.id === 'spotify' && (
+                    <div className="pt-2 border-t border-white/[0.04] mt-2 space-y-1.5">
+                      <button
+                        onClick={handleRecheck}
+                        disabled={rechecking}
+                        className="text-[10px] font-mono text-neutral-500 hover:text-[#1DB954] transition-colors disabled:opacity-50"
+                      >
+                        {rechecking ? (
+                          <span className="animate-pulse">re-vérification en cours…</span>
+                        ) : (
+                          're-vérifier les contextes (liked, playlists) →'
+                        )}
+                      </button>
+                      {recheckResult !== null && recheckResult >= 0 && (
+                        <p className="text-[10px] font-mono text-cyan-400">
+                          ✓ {recheckResult} track{recheckResult !== 1 ? 's' : ''} mis à jour
+                        </p>
+                      )}
+                      {recheckResult === -1 && (
+                        <p className="text-[10px] font-mono text-red-400">
+                          erreur lors de la re-vérification
+                        </p>
+                      )}
+                    </div>
                   )}
                 </div>
               )}
